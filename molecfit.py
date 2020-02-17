@@ -1,4 +1,4 @@
-def do_molecfit(headers,spectra,mode='HARPS',load_previous=False):
+def do_molecfit(headers,spectra,wave=[],mode='HARPS',load_previous=False):
     """This is a function that pipes a list of s1d spectra into molecfit, and
     executes it. It first launces the molecfit gui on the middle spectrum of the
     sequence, and then loops through the entire list, returning the transmission
@@ -78,10 +78,11 @@ def do_molecfit(headers,spectra,mode='HARPS',load_previous=False):
         list_of_trans = []
 
         middle_i = int(round(0.5*N))#We initialize molecfit on the middle spectrum of the time series.
-        write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,middle_i,mode=mode)
+        write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,middle_i,mode=mode,wave=wave)
         print(molecfit_input_root)
         print(temp_specname+'.fits')
         print(headers[middle_i])
+
         execute_molecfit(molecfit_prog_root,molecfit_input_root+parname,gui=True)
         wl,fx,trans = retrieve_output_molecfit(molecfit_input_root+temp_specname)
         remove_output_molecfit(molecfit_input_root,temp_specname)
@@ -89,7 +90,7 @@ def do_molecfit(headers,spectra,mode='HARPS',load_previous=False):
         for i in range(N):#range(len(spectra)):
             print('Fitting spectrum %s from %s' % (i+1,len(spectra)))
             t1=ut.start()
-            write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,i,mode=mode)
+            write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,i,mode=mode,wave=wave)
             execute_molecfit(molecfit_prog_root,molecfit_input_root+parname,gui=False)
             wl,fx,trans = retrieve_output_molecfit(molecfit_input_root+temp_specname)
             remove_output_molecfit(molecfit_input_root,temp_specname)
@@ -107,7 +108,7 @@ def do_molecfit(headers,spectra,mode='HARPS',load_previous=False):
         print(to_do_manually)
         #CHECK THAT THIS FUNCIONALITY WORKS:
         for i in to_do_manually:
-            write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,int(i),mode=mode)
+            write_file_to_molecfit(molecfit_input_root,temp_specname+'.fits',headers,spectra,int(i),mode=mode,wave=wave)
             execute_molecfit(molecfit_prog_root,molecfit_input_root+parname,gui=True)
             wl,fx,trans = retrieve_output_molecfit(molecfit_input_root+temp_specname)
             list_of_wls[int(i)] = wl*1000.0#Convert to nm.
@@ -428,11 +429,15 @@ def execute_molecfit(molecfit_prog_root,molecfit_input_file,gui=False):
         os.system(command)
     #python3 /Users/hoeijmakers/Molecfit/bin/molecfit_gui /Users/hoeijmakers/Molecfit/share/molecfit/spectra/cross_cor/test.par
 
-def write_file_to_molecfit(molecfit_file_root,name,headers,spectra,ii,mode='HARPS'):
+def write_file_to_molecfit(molecfit_file_root,name,headers,spectra,ii,mode='HARPS',wave=[]):
     """This is a wrapper for writing a spectrum from a list to molecfit format.
     name is the filename of the fits file that is the output.
     headers is the list of astropy header objects associated with the list of spectra
     in the spectra variable. ii is the number from that list that needs to be written.
+
+    The wave keyword is set for when the s1d headers do not contain wavelength information like HARPS does.
+    (for instance, ESPRESSO). The wave keyword needs to be set in this case, to the wavelength array as extracted from FITS files or smth.
+    If you do that for HARPS and set the wave keyword, this code will still grab it from the header, and overwrite it. So dont bother.
     """
     import astropy.io.fits as fits
     from scipy import stats
@@ -440,21 +445,53 @@ def write_file_to_molecfit(molecfit_file_root,name,headers,spectra,ii,mode='HARP
     import lib.functions as fun
     import lib.constants as const
     import numpy as np
-    import ut
+    import lib.utils as ut
+    import sys
     ut.typetest('ii write_file_to_molecfit',ii,int)
     spectrum = spectra[int(ii)]
     npx = len(spectrum)
 
     if mode == 'HARPS':
         bervkeyword = 'HIERARCH ESO DRS BERV'
-
-    if mode == 'HARPSN':
+        berv = headers[ii][bervkeyword]*1000.0#Need to un-correct the s1d spectra to go back to the frame of the Earths atmosphere.
+        wave = (headers[ii]['CDELT1']*fun.findgen(len(spectra[ii]))+headers[ii]['CRVAL1'])*(1.0-berv/const.c)
+        print(wave)
+        sys.exit()
+    elif mode == 'HARPSN':
         bervkeyword = 'HIERARCH TNG DRS BERV'
+        berv = headers[ii][bervkeyword]*1000.0#Need to un-correct the s1d spectra to go back to the frame of the Earths atmosphere.
+        wave = (headers[ii]['CDELT1']*fun.findgen(len(spectra[ii]))+headers[ii]['CRVAL1'])*(1.0-berv/const.c)
+    elif mode == 'ESPRESSO':
+        if len(wave) == 0:
+            print('ERROR in WRITE_FILE_TO_MOLECFIT: WHEN MODE = ESPRESSO, THE 1D WAVE AXIS NEEDS TO BE PROVIDED.')
+            sys.exit()
+        #WAVE VARIABLE NEEDS TO BE PASSED NOW.
+        bervkeyword = 'HIERARCH ESO QC BERV'
+        berv = headers[ii][bervkeyword]*1000.0#Need to un-correct the s1d spectra to go back to the frame of the Earths atmosphere.
 
 
 
-    berv = headers[ii][bervkeyword]*1000.0#Need to un-correct the s1d spectra to go back to the frame of the Earths atmosphere.
-    wave = (headers[ii]['CDELT1']*fun.findgen(len(spectra[ii]))+headers[ii]['CRVAL1'])*(1.0-berv/const.c)
+# def write_file_to_molecfit_ESPRESSO(molecfit_file_root,name,headers,spectra, waves, ii,order):
+#     """This is a wrapper for writing a spectrum from a list to molecfit format.
+#     name is the filename of the fits file that is the output.
+#     headers is the list of astropy header objects associated with the list of spectra
+#     in the spectra variable. ii is the number from that list that needs to be written.
+#     """
+#     import astropy.io.fits as fits
+#     from scipy import stats
+#     import copy
+#     import utils as ut
+#     import numpy as np
+#     import scipy.constants as const
+#     ii = int(ii)
+#     spectrum = spectra[ii][order]
+#     npx = len(spectrum)
+#     berv = headers[ii]['HIERARCH ESO QC BERV']*1000.0#Need to un-correct the s1d spectra to go back to the frame of the Earths atmosphere.
+#     wave = waves[ii][order]*(1.0-berv/const.c)
+
+
+
+
     #at the end, when the transmission spectrum is corrected, we stay in the barycentric frame because these will be used to
     #correct the e2ds spectra which are not yet berv-corrected.
     err = np.sqrt(spectrum)
